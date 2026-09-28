@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="CIDB.iBidder.Application/CIDB.iBidder.Application.csproj" />
+  <Project Path="CIDB.iBidder.Client/CIDB.iBidder.Client.csproj" />
+  <Project Path="CIDB.iBidder.Domain/CIDB.iBidder.Domain.csproj" />
+  <Project Path="CIDB.iBidder.Infrastructure/CIDB.iBidder.Infrastructure.csproj" />
+</Solution>
