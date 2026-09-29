@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\CIDB.iBidder.Domain\CIDB.iBidder.Domain.csproj" />
+  </ItemGroup>
+
 </Project>
