@@ -1,0 +1,276 @@
+﻿@page "/track-record"
+@rendermode InteractiveServer
+
+@using System.Globalization
+@using CIDB.iBidder.Application.TransferOptions.Crm
+@using CIDB.iBidder.Application.Interfaces.Repositories
+@inject ITrackRecordRepository TrackRecordRepository
+@inject AuthenticationStateProvider AuthState
+
+<div class="profile-container">
+    <div class="page-header mb-4 d-flex justify-content-between align-items-center">
+        <div>
+            <h2>Track Record</h2>
+            <p class="text-muted mb-0">Projects and contracts completed under your CRS registration.</p>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Loading track record...</p>
+        </div>
+    }
+    else if (errorMessage is not null)
+    {
+        <div class="alert alert-danger">@errorMessage</div>
+    }
+    else
+    {
+        <!-- SUMMARY -->
+        <div class="row mb-4">
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>Projects Completed</label>
+                            <p class="fs-3 mb-0">@summary.ProjectsCompleted</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>Contracts Awarded</label>
+                            <p class="fs-3 mb-0">@summary.ContractsAwarded</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>Average Performance</label>
+                            <p class="fs-3 mb-0">@(hasScores ? summary.AveragePerformance.ToString("0.0") : "N/A")</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>Total Contract Value</label>
+                            <p class="fs-3 mb-0">@totalValue.ToString("C0", ZaCulture)</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TABLE -->
+        <div class="card profile-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h5 class="card-title mb-0">Completed Projects</h5>
+                    <div class="input-group w-auto">
+                        <span class="input-group-text"><i class="bi bi-search"></i></span>
+                        <input type="search" class="form-control" placeholder="Search reference, title or employer"
+                               value="@searchTerm" @oninput="OnSearchChanged" />
+                    </div>
+                </div>
+
+                @if (!allRecords.Any())
+                {
+                    <p class="text-muted">No track record has been captured for your company yet.</p>
+                }
+                else if (!filtered.Any())
+                {
+                    <p class="text-muted">No projects match "@searchTerm".</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Reference</th>
+                                    <th>Title</th>
+                                    <th>Employer</th>
+                                    <th class="text-end">Contract Value</th>
+                                    <th class="text-end">Your Share (incl. VAT)</th>
+                                    <th>Completed</th>
+                                    <th>Performance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var record in pageItems)
+                                {
+                                    <tr>
+                                        <td>@(record.Reference ?? "N/A")</td>
+                                        <td>@(record.Title ?? "N/A")</td>
+                                        <td>@(record.EmployerText ?? "N/A")</td>
+                                        <td class="text-end">@FormatMoney(record.Value)</td>
+                                        <td class="text-end">@FormatMoney(record.ContractorShareInclVat)</td>
+                                        <td>@(record.CompletedOn?.ToString("dd MMM yyyy") ?? "In progress")</td>
+                                        <td>
+                                            @if (record.PerformanceScore is decimal score)
+                                            {
+                                                <span class="badge @ScoreBadge(score)">@score.ToString("0.0")</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">N/A</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @if (totalPages > 1)
+                    {
+                        <div class="d-flex justify-content-between align-items-center mt-3">
+                            <span class="text-muted small">
+                                Showing @((currentPage - 1) * PageSize + 1)–@Math.Min(currentPage * PageSize, filtered.Count) of @filtered.Count
+                            </span>
+                            <div class="btn-group">
+                                <button class="btn btn-outline-secondary btn-sm" disabled="@(currentPage == 1)"
+                                        @onclick="() => currentPage--">
+                                    Previous
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm" disabled="@(currentPage == totalPages)"
+                                        @onclick="() => currentPage++">
+                                    Next
+                                </button>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const int PageSize = 10;
+
+    private static readonly CultureInfo ZaCulture = new("en-ZA");
+
+    private IReadOnlyCollection<TrackRecordModel> allRecords = Array.Empty<TrackRecordModel>();
+    private TrackRecordSummary summary = new();
+    private decimal totalValue;
+    private bool hasScores;
+
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    private string searchTerm = "";
+    private int currentPage = 1;
+
+    // Filtered + sorted list, newest completion first (in-progress items on top)
+    private List<TrackRecordModel> filtered => allRecords
+        .Where(Matches)
+        .OrderByDescending(r => r.CompletedOn ?? DateTime.MaxValue)
+        .ToList();
+
+    private int totalPages => Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)PageSize));
+
+    private IEnumerable<TrackRecordModel> pageItems => filtered
+        .Skip((currentPage - 1) * PageSize)
+        .Take(PageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTrackRecordAsync();
+    }
+
+    private async Task LoadTrackRecordAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            var crsNumber = user.FindFirst("CrsNumber")?.Value;
+
+            if (string.IsNullOrWhiteSpace(crsNumber))
+            {
+                errorMessage = "Your CRS number could not be determined.";
+                return;
+            }
+
+            allRecords = await TrackRecordRepository.GetByCrsNumberAsync(crsNumber, CancellationToken.None);
+            BuildSummary();
+        }
+        catch
+        {
+            errorMessage = "Your track record could not be loaded. Please try again later.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void BuildSummary()
+    {
+        var scores = allRecords
+            .Where(r => r.PerformanceScore.HasValue)
+            .Select(r => r.PerformanceScore!.Value)
+            .ToList();
+
+        hasScores = scores.Count > 0;
+
+        // ClaimsRaised, Disputes and SafetyIncidents have no source on TrackRecordModel yet,
+        // so they are left at their defaults and not shown on this page.
+        summary = new TrackRecordSummary
+        {
+            ProjectsCompleted = allRecords.Count(r => r.CompletedOn.HasValue),
+            ContractsAwarded = allRecords
+                .Where(r => r.ContractId.HasValue)
+                .Select(r => r.ContractId!.Value)
+                .Distinct()
+                .Count(),
+            AveragePerformance = hasScores ? scores.Average() : 0
+        };
+
+        totalValue = allRecords.Sum(r => r.Value ?? 0);
+    }
+
+    private bool Matches(TrackRecordModel r)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return true;
+        }
+
+        return Contains(r.Reference) || Contains(r.Title) || Contains(r.EmployerText);
+
+        bool Contains(string? value) =>
+            value?.Contains(searchTerm.Trim(), StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private void OnSearchChanged(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        currentPage = 1;
+    }
+
+    private static string FormatMoney(decimal? amount) =>
+        amount.HasValue ? amount.Value.ToString("C0", ZaCulture) : "N/A";
+
+    // Assumes PerformanceScore is on a 0-100 scale; adjust thresholds if yours differs
+    private static string ScoreBadge(decimal score) => score switch
+    {
+        >= 80 => "bg-success",
+        >= 60 => "bg-warning text-dark",
+        _ => "bg-danger"
+    };
+}

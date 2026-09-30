@@ -1,0 +1,370 @@
+﻿@page "/compliance"
+@rendermode InteractiveServer
+
+@using System.Globalization
+@using CIDB.iBidder.Application.Interfaces.Services
+@using CIDB.iBidder.Application.TransferOptions.Compliance
+@using CIDB.iBidder.Domain.Enums
+@using CIDB.iBidder.Domain.Models.Crm
+@inject IContractorComplianceService ComplianceService
+@inject IContractorProfileService ContractorProfileService
+@inject AuthenticationStateProvider AuthState
+
+<div class="profile-container">
+    <div class="page-header mb-4 d-flex justify-content-between align-items-center">
+        <div>
+            <h2>Compliance</h2>
+            <p class="text-muted mb-0">Your compliance status across CSD, CIDB and SARS.</p>
+        </div>
+        <button class="btn btn-outline-danger" @onclick="LoadAsync" disabled="@isLoading">
+            <i class="bi bi-arrow-clockwise me-1"></i> Re-run check
+        </button>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Running compliance checks...</p>
+        </div>
+    }
+    else if (errorMessage is not null)
+    {
+        <div class="alert alert-danger">@errorMessage</div>
+    }
+    else if (compliance is not null)
+    {
+        var csd = profile?.Csd;
+
+        <!-- SUMMARY -->
+        <div class="row mb-4">
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>CIDB Status</label>
+                            <p class="fs-5 mb-0 text-@Variant(compliance.Status)">@compliance.StatusText</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>CSD Record</label>
+                            <p class="fs-5 mb-0 @(compliance.CsdSupplierFound ? "text-success" : "text-danger")">
+                                @(compliance.CsdSupplierFound ? "Found" : "Missing")
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>CRM Linked</label>
+                            <p class="fs-5 mb-0 @(compliance.CrmContractorFound ? "text-success" : "text-secondary")">
+                                @(compliance.CrmContractorFound ? "Yes" : "No")
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6 mb-3">
+                <div class="card profile-card h-100">
+                    <div class="card-body">
+                        <div class="info-group mb-0">
+                            <label>Last Checked</label>
+                            <p class="mb-0">@compliance.CheckedAtUtc.ToString("dd MMM yyyy HH:mm", CultureInfo.InvariantCulture) UTC</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- STATUS -->
+        <div class="alert alert-@Variant(compliance.Status) d-flex align-items-start mb-4" role="status">
+            <i class="bi @HeroIcon(compliance.Status) fs-3 me-3"></i>
+            <div>
+                <h5 class="alert-heading mb-1">@compliance.StatusText</h5>
+                <p class="mb-0">@compliance.Reason</p>
+            </div>
+        </div>
+
+        <!-- COMPLIANCE CHECKS -->
+        <div class="card profile-card mb-4">
+            <div class="card-body">
+                <h5 class="card-title mb-4">Compliance Checks</h5>
+                <div class="row g-3">
+                    @foreach (var item in BuildComplianceItems())
+                    {
+                        <div class="col-md-6 col-lg-4">
+                            <div class="card h-100 border-start border-4 @(item.IsPassed ? "border-success" : "border-danger")">
+                                <div class="card-body d-flex">
+                                    <i class="bi @IconFor(item.Key) fs-3 me-3 @(item.IsPassed ? "text-success" : "text-danger")"></i>
+                                    <div class="flex-grow-1 overflow-hidden">
+                                        <h6 class="mb-1">@item.Name</h6>
+                                        @if (!string.IsNullOrEmpty(item.Reference))
+                                        {
+                                            <p class="text-muted small mb-2 text-break">@item.Reference</p>
+                                        }
+                                        <span class="badge @(item.IsPassed ? "bg-success" : "bg-danger")">
+                                            <i class="bi @(item.IsPassed ? "bi-check-circle-fill" : "bi-x-circle-fill") me-1"></i>
+                                            @(item.IsPassed ? "Compliant" : "Non-Compliant")
+                                        </span>
+                                        @if (item.ExpiryDate is not null)
+                                        {
+                                            <div class="text-muted small mt-2">
+                                                <i class="bi bi-calendar-event me-1"></i>
+                                                Expires: @item.ExpiryDate.Value.ToString("dd MMM yyyy")
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrEmpty(item.Detail))
+                                        {
+                                            <div class="text-muted small mt-1 text-truncate" title="@item.Detail">
+                                                <i class="bi bi-info-circle me-1"></i>
+                                                @item.Detail
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- CSD SNAPSHOT -->
+        @if (csd is not null)
+        {
+            <div class="card profile-card">
+                <div class="card-body">
+                    <h5 class="card-title mb-4">CSD Supplier Snapshot</h5>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="info-group">
+                                <label>Legal Name</label>
+                                <p>@(csd.SupplierIdentification?.LegalName ?? "N/A")</p>
+                            </div>
+                            <div class="info-group">
+                                <label>SA Company Number</label>
+                                <p>@(csd.SupplierIdentification?.SACompanyNumber ?? "N/A")</p>
+                            </div>
+                            <div class="info-group">
+                                <label>CSD Supplier Number</label>
+                                <p>@(csd.SupplierIdentification?.SupplierNumber ?? "N/A")</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="info-group">
+                                <label>B-BBEE Status</label>
+                                <p>@(csd.BBBEE?.StatusLevelOfContributorCode ?? "N/A")</p>
+                            </div>
+                            <div class="info-group">
+                                <label>Tax Clearance Status</label>
+                                <p>
+                                    @if (csd.Tax?.IsValidCertificate == true)
+                                    {
+                                        <span class="badge bg-success">Valid</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-danger">Invalid / Expired</span>
+                                    }
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private ContractorComplianceResult? compliance;
+    private ContractorFullProfile? profile;
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        errorMessage = null;
+
+        try
+        {
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            var csdNumber = user.FindFirst("CsdNumber")?.Value;
+            var crsNumber = user.FindFirst("CrsNumber")?.Value;
+
+            if (string.IsNullOrWhiteSpace(csdNumber))
+            {
+                errorMessage = "Your CSD number could not be determined.";
+                return;
+            }
+
+            var party = Party.Create(
+                externalId: $"adhoc-{csdNumber}",
+                name: csdNumber,
+                roles: PartyRole.Supplier,
+                registrationScheme: "ZA-CSD",
+                registrationNumber: csdNumber);
+
+            var complianceTask = ComplianceService.CheckAsync(party, CancellationToken.None);
+            var profileTask = TryLoadProfileAsync(crsNumber);
+
+            await Task.WhenAll(complianceTask, profileTask);
+
+            compliance = await complianceTask;
+            profile = await profileTask;
+        }
+        catch
+        {
+            errorMessage = "The compliance check could not be completed. Please try again later.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // The CSD snapshot is supplementary, so a profile failure must not hide the compliance result.
+    private async Task<ContractorFullProfile?> TryLoadProfileAsync(string? crsNumber)
+    {
+        if (string.IsNullOrWhiteSpace(crsNumber))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await ContractorProfileService.GetByCrsNumberAsync(crsNumber, CancellationToken.None);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private List<ComplianceCheckItem> BuildComplianceItems()
+    {
+        var csd = profile?.Csd;
+        var items = new List<ComplianceCheckItem>();
+
+        var cidbAccreditation = csd?.Accreditations?
+            .FirstOrDefault(a => a.AccreditationBody?.AccreditationBodyCode
+                ?.Contains("CIDB", StringComparison.OrdinalIgnoreCase) == true
+                || a.Description?.Contains("CIDB", StringComparison.OrdinalIgnoreCase) == true);
+
+        items.Add(new ComplianceCheckItem
+        {
+            Key = "cibd",
+            Name = "CIDB Registration",
+            Reference = cidbAccreditation?.AccreditationNumber,
+            ExpiryDate = cidbAccreditation?.ExpiryDate,
+            IsPassed = compliance?.Status == CidbComplianceStatus.Compliant
+                       || cidbAccreditation?.IsVerified == true,
+            Detail = compliance?.Reason
+        });
+
+        items.Add(new ComplianceCheckItem
+        {
+            Key = "csd",
+            Name = "CSD Registration",
+            Reference = csd?.SupplierIdentification?.SupplierNumber,
+            IsPassed = compliance?.CsdSupplierFound == true,
+            Detail = compliance?.CsdSupplierFound == true ? "Supplier active on CSD" : "Not found on CSD"
+        });
+
+        items.Add(new ComplianceCheckItem
+        {
+            Key = "tax",
+            Name = "SARS Tax Compliance",
+            Reference = csd?.Tax?.IncomeTaxNumber,
+            IsPassed = csd?.Tax?.IsValidCertificate == true,
+            Detail = csd?.Tax?.ValidationResponse
+        });
+
+        items.Add(new ComplianceCheckItem
+        {
+            Key = "bbbee",
+            Name = "B-BBEE Status",
+            Reference = csd?.BBBEE?.CertificateNumber,
+            ExpiryDate = csd?.BBBEE?.CertificateExpiryDate,
+            IsPassed = !string.IsNullOrEmpty(csd?.BBBEE?.StatusLevelOfContributorCode),
+            Detail = csd?.BBBEE?.StatusLevelOfContributorCode is not null
+                ? $"Level {csd.BBBEE.StatusLevelOfContributorCode}"
+                : null
+        });
+
+        var coida = csd?.Accreditations?
+            .FirstOrDefault(a => a.Description?.Contains("COIDA", StringComparison.OrdinalIgnoreCase) == true);
+
+        items.Add(new ComplianceCheckItem
+        {
+            Key = "coida",
+            Name = "COIDA",
+            Reference = coida?.AccreditationNumber,
+            ExpiryDate = coida?.ExpiryDate,
+            IsPassed = coida?.IsVerified == true,
+            Detail = coida?.Description
+        });
+
+        items.Add(new ComplianceCheckItem
+        {
+            Key = "professional",
+            Name = "CRM Contractor Link",
+            Reference = compliance?.CRSNumber,
+            IsPassed = compliance?.CrmContractorFound == true,
+            Detail = compliance?.CrmContractorFound == true
+                ? $"Linked to CRS {compliance.CRSNumber}"
+                : "Not linked to internal CRM"
+        });
+
+        return items;
+    }
+
+    private static string Variant(CidbComplianceStatus status) => status switch
+    {
+        CidbComplianceStatus.Compliant => "success",
+        CidbComplianceStatus.NonCompliant => "danger",
+        _ => "secondary"
+    };
+
+    private static string HeroIcon(CidbComplianceStatus status) => status switch
+    {
+        CidbComplianceStatus.Compliant => "bi-check-circle-fill",
+        CidbComplianceStatus.NonCompliant => "bi-x-circle-fill",
+        _ => "bi-info-circle-fill"
+    };
+
+    private static string IconFor(string key) => key switch
+    {
+        "cibd" => "bi-award",
+        "csd" => "bi-file-earmark-check",
+        "tax" => "bi-receipt",
+        "coida" => "bi-shield-check",
+        "bbbee" => "bi-people",
+        "professional" => "bi-briefcase",
+        _ => "bi-patch-check"
+    };
+
+    private sealed class ComplianceCheckItem
+    {
+        public string Key { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string? Reference { get; init; }
+        public DateTime? ExpiryDate { get; init; }
+        public bool IsPassed { get; init; }
+        public string? Detail { get; init; }
+    }
+}

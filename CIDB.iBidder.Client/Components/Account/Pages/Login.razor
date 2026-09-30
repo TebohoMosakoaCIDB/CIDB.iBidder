@@ -24,9 +24,9 @@
                 <hr />
                 <ValidationSummary class="text-danger" role="alert" />
                 <div class="form-floating mb-3">
-                    <InputText @bind-Value="Input.CrsNumber" id="Input.CrsNumber" class="form-control" autocomplete="username webauthn" aria-required="true" placeholder="11111111" />
-                    <label for="Input.CrsNumber" class="form-label">CrsNumber</label>
-                    <ValidationMessage For="() => Input.CrsNumber" class="text-danger" />
+                    <InputText @bind-Value="Input.Email" id="Input.CrsNumber" class="form-control" autocomplete="username" aria-required="true" placeholder="example@mail.com" />
+                    <label for="Input.Email" class="form-label">Email</label>
+                    <ValidationMessage For="() => Input.Email" class="text-danger" />
                 </div>
                 <div class="form-floating mb-3">
                     <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" autocomplete="current-password" aria-required="true" placeholder="password" />
@@ -121,7 +121,7 @@
 
             // This doesn't count login failures towards account lockout
             // To enable password failures to trigger account lockout, set lockoutOnFailure: true
-            result = await SignInManager.PasswordSignInAsync(Input.CrsNumber, Input.Password, Input.RememberMe, lockoutOnFailure: false);
+            result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: false);
         }
 
         if (result.Succeeded)
@@ -149,8 +149,8 @@
     private sealed class InputModel
     {
         [Required]
-        [Display(Name = "Crs Number")]
-        public string CrsNumber { get; set; } = "";
+        [Display(Name = "Email")]
+        public string Email { get; set; } = "";
 
         [Required]
         [DataType(DataType.Password)]

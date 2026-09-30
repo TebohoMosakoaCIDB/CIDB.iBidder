@@ -1,9 +1,6 @@
 ﻿using CIDB.iBidder.Domain.Common;
 using CIDB.iBidder.Domain.Enums;
 using CIDB.iBidder.Domain.ValueObjects;
-using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace CIDB.iBidder.Domain.Models.Crm
 {

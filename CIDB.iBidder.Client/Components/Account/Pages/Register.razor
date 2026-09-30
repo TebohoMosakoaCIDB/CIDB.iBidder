@@ -6,7 +6,11 @@
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.AspNetCore.WebUtilities
 @using CIDB.iBidder.Domain.Models
+@using CIDB.iBidder.Application.Interfaces.Services
+@using Microsoft.EntityFrameworkCore
+@using CIDB.iBidder.Application.TransferOptions.Compliance
 
+@inject IContractorProfileService ContractorProfileService
 @inject UserManager<ApplicationUser> UserManager
 @inject IUserStore<ApplicationUser> UserStore
 @inject SignInManager<ApplicationUser> SignInManager
@@ -28,22 +32,27 @@
             <hr />
             <ValidationSummary class="text-danger" role="alert" />
             <div class="form-floating mb-3">
-                <InputText @bind-Value="Input.CrsNumber" id="Input.CrsNumber" class="form-control" autocomplete="username" aria-required="true" placeholder="11111111" />
+                <InputText @bind-Value="Input.Email" id="Input.Email" class="form-control" autocomplete="email" aria-required="true" />
+                <label for="Input.CrsNumber">Email Address</label>
+                <ValidationMessage For="() => Input.Email" class="text-danger" />
+            </div>
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.CrsNumber" id="Input.CrsNumber" class="form-control" aria-required="true" />
                 <label for="Input.CrsNumber">Crs Number</label>
                 <ValidationMessage For="() => Input.CrsNumber" class="text-danger" />
             </div>
             <div class="form-floating mb-3">
-                <InputText @bind-Value="Input.CrsNumber" id="Input.CrsNumber" class="form-control" autocomplete="username" aria-required="true" placeholder="11111111" />
-                <label for="Input.CrsNumber">Crs Number</label>
-                <ValidationMessage For="() => Input.CrsNumber" class="text-danger" />
+                <InputText @bind-Value="Input.CsdNumber" id="Input.CsdNumber" class="form-control" aria-required="true" />
+                <label for="Input.CsdNumber">Csd Number / MAAA Number</label>
+                <ValidationMessage For="() => Input.CsdNumber" class="text-danger" />
             </div>
             <div class="form-floating mb-3">
-                <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" autocomplete="new-password" aria-required="true" placeholder="password" />
+                <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" aria-required="true"/>
                 <label for="Input.Password">Password</label>
                 <ValidationMessage For="() => Input.Password" class="text-danger" />
             </div>
             <div class="form-floating mb-3">
-                <InputText type="password" @bind-Value="Input.ConfirmPassword" id="Input.ConfirmPassword" class="form-control" autocomplete="new-password" aria-required="true" placeholder="password" />
+                <InputText type="password" @bind-Value="Input.ConfirmPassword" id="Input.ConfirmPassword" class="form-control" aria-required="true"/>
                 <label for="Input.ConfirmPassword">Confirm Password</label>
                 <ValidationMessage For="() => Input.ConfirmPassword" class="text-danger" />
             </div>
@@ -77,12 +86,183 @@
 
     public async Task RegisterUser(EditContext editContext)
     {
+        identityErrors = null;
+
+        var crsNumber = Input.CrsNumber.Trim();
+        var csdNumber = Input.CsdNumber.Trim();
+        var email = Input.Email.Trim();
+
+        // ---------------------------------------------------------
+        // 1. Validate CRS number against CRM
+        // ---------------------------------------------------------
+
+        ContractorFullProfile contractorProfile;
+
+        try
+        {
+            contractorProfile = await ContractorProfileService.GetByCrsNumberAsync(
+                crsNumber,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(
+                ex,
+                "Registration validation failed for CRS number '{CrsNumber}'.",
+                crsNumber);
+
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "ContractorLookupFailed",
+                Description = "We could not validate the CRS number. Please try again."
+            }
+            ];
+
+            return;
+        }
+
+        if (contractorProfile.Crm is null)
+        {
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "CrsNumberNotFound",
+                Description = "The CRS number could not be found in the CIDB contractor records."
+            }
+            ];
+
+            return;
+        }
+
+        // ---------------------------------------------------------
+        // 2. Make sure CRM has a CSD number
+        // ---------------------------------------------------------
+
+        if (string.IsNullOrWhiteSpace(contractorProfile.Crm.CsdNumber))
+        {
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "CsdNumberNotAvailable",
+                Description = "No CSD number is associated with this CRS number."
+            }
+            ];
+
+            return;
+        }
+
+        var crmCsdNumber = contractorProfile.Crm.CsdNumber.Trim();
+
+        // ---------------------------------------------------------
+        // 3. Make sure entered CSD number matches CRM
+        // ---------------------------------------------------------
+
+        if (!string.Equals(
+                crmCsdNumber,
+                csdNumber,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "CsdNumberMismatch",
+                Description = "The CSD number does not match the CSD number associated with the CRS number."
+            }
+            ];
+
+            return;
+        }
+
+        // ---------------------------------------------------------
+        // 4. Make sure supplier exists in CSD
+        // ---------------------------------------------------------
+
+        if (contractorProfile.Csd is null)
+        {
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "CsdSupplierNotFound",
+                Description = "The CSD number could not be found in the Central Supplier Database."
+            }
+            ];
+
+            return;
+        }
+
+        // ---------------------------------------------------------
+        // 5. Check whether an account already exists
+        // ---------------------------------------------------------
+
+        var existingUserByCrs = await UserManager.Users
+            .FirstOrDefaultAsync(
+                x => x.CrsNumber == crsNumber);
+
+        if (existingUserByCrs is not null)
+        {
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "CrsAlreadyRegistered",
+                Description = "An account has already been registered for this CRS number."
+            }
+            ];
+
+            return;
+        }
+
+        var existingUserByCsd = await UserManager.Users
+            .FirstOrDefaultAsync(
+                x => x.CsdNumber == csdNumber);
+
+        if (existingUserByCsd is not null)
+        {
+            identityErrors =
+            [
+                new IdentityError
+            {
+                Code = "CsdAlreadyRegistered",
+                Description = "An account has already been registered for this CSD number."
+            }
+            ];
+
+            return;
+        }
+
+        // ---------------------------------------------------------
+        // 6. Create Identity user
+        // ---------------------------------------------------------
+
         var user = CreateUser();
 
-        await UserStore.SetUserNameAsync(user, Input.CrsNumber, CancellationToken.None);
+        user.CrsNumber = crsNumber;
+        user.CsdNumber = csdNumber;
+        user.CreatedAtUtc = DateTime.UtcNow;
+        user.IsActive = true;
+
+        await UserStore.SetUserNameAsync(
+            user,
+            email,
+            CancellationToken.None);
+
         var emailStore = GetEmailStore();
-        await emailStore.SetEmailAsync(user, Input.CrsNumber, CancellationToken.None);
-        var result = await UserManager.CreateAsync(user, Input.Password);
+
+        // IMPORTANT: use the actual email, not CRS number
+        await emailStore.SetEmailAsync(
+            user,
+            email,
+            CancellationToken.None);
+
+        var result = await UserManager.CreateAsync(
+            user,
+            Input.Password);
 
         if (!result.Succeeded)
         {
@@ -90,28 +270,54 @@
             return;
         }
 
-        Logger.LogInformation("User created a new account with password.");
+        Logger.LogInformation(
+            "User registered successfully for CRS number '{CrsNumber}' and CSD number '{CsdNumber}'.",
+            crsNumber,
+            csdNumber);
+
+        // ---------------------------------------------------------
+        // 7. Email confirmation
+        // ---------------------------------------------------------
 
         var userId = await UserManager.GetUserIdAsync(user);
+
         var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
-        code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
+
+        code = WebEncoders.Base64UrlEncode(
+            Encoding.UTF8.GetBytes(code));
+
         var callbackUrl = NavigationManager.GetUriWithQueryParameters(
             NavigationManager.ToAbsoluteUri("Account/ConfirmEmail").AbsoluteUri,
-            new Dictionary<string, object?> { ["userId"] = userId, ["code"] = code, ["returnUrl"] = ReturnUrl });
+            new Dictionary<string, object?>
+            {
+                ["userId"] = userId,
+                ["code"] = code,
+                ["returnUrl"] = ReturnUrl
+            });
 
-        await EmailSender.SendConfirmationLinkAsync(user, Input.CrsNumber, HtmlEncoder.Default.Encode(callbackUrl));
+        await EmailSender.SendConfirmationLinkAsync(
+            user,
+            email,
+            HtmlEncoder.Default.Encode(callbackUrl));
 
         if (UserManager.Options.SignIn.RequireConfirmedAccount)
         {
             RedirectManager.RedirectTo(
                 "Account/RegisterConfirmation",
-                new() { ["email"] = Input.CrsNumber, ["returnUrl"] = ReturnUrl });
+                new()
+                {
+                    ["email"] = email,
+                    ["returnUrl"] = ReturnUrl
+                });
+
+            return;
         }
-        else
-        {
-            await SignInManager.SignInAsync(user, isPersistent: false);
-            RedirectManager.RedirectTo(ReturnUrl);
-        }
+
+        await SignInManager.SignInAsync(
+            user,
+            isPersistent: false);
+
+        RedirectManager.RedirectTo(ReturnUrl);
     }
 
     private ApplicationUser CreateUser()
@@ -138,6 +344,11 @@
 
     private sealed class InputModel
     {
+        [Required]
+        [DataType(DataType.EmailAddress)]
+        [Display(Name = "Email")]
+        public string Email { get; set; } = "";
+
         [Required]
         [Display(Name = "MAAA Number")]
         public string CsdNumber { get; set; } = "";
